@@ -1,1 +1,3 @@
-
+cd /home/tienthanh/tro_li_hoc_tap
+source venv/bin/activate
+uvicorn app:app --host 127.0.0.1 --port 8000 --reload
