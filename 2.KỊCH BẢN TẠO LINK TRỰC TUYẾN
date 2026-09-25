@@ -1,0 +1,2 @@
+echo 'Dang khoi chay duong dan cong khai cho EduVie...'
+~/bin/cloudflared tunnel --url http://127.0.0.1:8000
