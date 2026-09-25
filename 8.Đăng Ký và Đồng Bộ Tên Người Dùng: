@@ -1,0 +1,85 @@
+async function handleLoginSubmit(e) {
+    e.preventDefault();
+    const username = document.getElementById("loginUsername")?.value.trim() || "";
+    const password = document.getElementById("loginPassword")?.value || "";
+
+    if (!username || !password) {
+        showAuthAlert("Vui lòng nhập đầy đủ Tên và Mật khẩu.", "error");
+        return;
+    }
+
+    try {
+        const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: username, password: password })
+        });
+        const data = await res.json();
+        if (data.success) {
+            currentUser = data.user;
+            localStorage.setItem("eduvie_user", JSON.stringify(data.user));
+            updateAuthUI(data.user);
+            showAuthAlert("Đăng nhập thành công! Chào mừng " + data.user.username, "success");
+            setTimeout(() => { closeAuthModal(); }, 700);
+        } else {
+            showAuthAlert(data.error || "Tên tài khoản hoặc mật khẩu không chính xác.", "error");
+        }
+    } catch (err) {
+        showAuthAlert("Lỗi kết nối máy chủ: " + err.message, "error");
+    }
+}
+
+async function handleRegisterSubmit(e) {
+    e.preventDefault();
+    const username = document.getElementById("regUsername")?.value.trim() || "";
+    const password = document.getElementById("regPassword")?.value || "";
+    const confirmPassword = document.getElementById("regConfirmPassword")?.value || "";
+
+    if (password !== confirmPassword) {
+        showAuthAlert("Mật khẩu xác nhận không trùng khớp!", "error");
+        return;
+    }
+
+    try {
+        const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: username,
+                password: password,
+                confirm_password: confirmPassword
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showAuthAlert("Tạo tài khoản thành công!", "success");
+            setTimeout(() => {
+                switchAuthMode("login");
+                const loginUser = document.getElementById("loginUsername");
+                if (loginUser) loginUser.value = username;
+            }, 1200);
+        } else {
+            showAuthAlert(data.error || "Đăng ký không thành công.", "error");
+        }
+    } catch (err) {
+        showAuthAlert("Lỗi kết nối máy chủ: " + err.message, "error");
+    }
+}
+
+function updateAuthUI(user) {
+    const topLoginBtn = document.getElementById("topLoginBtn");
+    const topUserPill = document.getElementById("topUserPill");
+    const topUserName = document.getElementById("topUserName");
+    const welcomeUserName = document.getElementById("welcomeUserName");
+
+    if (user && user.username) {
+        if (topLoginBtn) topLoginBtn.style.display = "none";
+        if (topUserPill) topUserPill.style.display = "inline-flex";
+        if (topUserName) topUserName.innerText = user.username;
+        if (welcomeUserName) welcomeUserName.innerText = user.username;
+    } else {
+        if (topLoginBtn) topLoginBtn.style.display = "inline-flex";
+        if (topUserPill) topUserPill.style.display = "none";
+        if (welcomeUserName) welcomeUserName.innerText = "Bạn";
+    }
+}
