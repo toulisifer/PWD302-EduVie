@@ -1,0 +1,52 @@
+from flask_wtf import FlaskForm
+from wtforms import StringField, TextAreaField, SelectField, SubmitField
+from wtforms.validators import DataRequired, Length, Email
+
+class StudyQuestionForm(FlaskForm):
+    student_name = StringField(
+        'Họ và tên học sinh',
+        validators=[
+            DataRequired(message='Vui lòng nhập họ và tên của bạn.'),
+            Length(min=2, max=60, message='Họ tên phải từ 2 đến 60 ký tự.')
+        ]
+    )
+    email = StringField(
+        'Email nhận kết quả giải đáp',
+        validators=[
+            DataRequired(message='Vui lòng nhập địa chỉ email để nhận kết quả giải đáp.'),
+            Email(message='Địa chỉ email không đúng định dạng.')
+        ]
+    )
+    grade = SelectField(
+        'Khối lớp',
+        choices=[(str(i), f'Lớp {i}') for i in range(1, 13)],
+        default='12',
+        validators=[DataRequired(message='Vui lòng chọn khối lớp.')]
+    )
+    subject = SelectField(
+        'Phân môn cần hỗ trợ',
+        choices=[
+            ('Toán học', '📐 Toán học'),
+            ('Vật lí', '⚡ Vật lí'),
+            ('Hoá Học', '🧪 Hoá Học'),
+            ('Sinh Học', '🧬 Sinh Học'),
+            ('Ngữ Văn', '✍️ Ngữ Văn'),
+            ('Tin Học', '💻 Tin Học'),
+            ('Tiếng Anh', '🌐 Tiếng Anh'),
+            ('Lịch sử', '📜 Lịch sử'),
+            ('Địa lí', '🗺️ Địa lí'),
+            ('Giáo Dục Công Dân', '⚖️ Giáo Dục Công Dân'),
+            ('Công Nghệ', '⚙️ Công Nghệ'),
+            ('Giáo dục thể chất', '🏃 Giáo dục thể chất'),
+            ('Quốc phòng - An ninh', '🛡️ Quốc phòng - An ninh')
+        ],
+        validators=[DataRequired(message='Vui lòng chọn môn học.')]
+    )
+    question = TextAreaField(
+        'Nội dung câu hỏi / thắc mắc bài học',
+        validators=[
+            DataRequired(message='Vui lòng nhập nội dung câu hỏi.'),
+            Length(min=5, max=1000, message='Nội dung câu hỏi phải từ 5 đến 1000 ký tự.')
+        ]
+    )
+    submit = SubmitField('Gửi Thắc Mắc & Nhận Kết Quả Qua Email')
