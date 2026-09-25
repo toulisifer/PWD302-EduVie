@@ -1,0 +1,76 @@
+<div class="auth-modal-overlay" id="authModalOverlay" onclick="handleModalOverlayClick(event)">
+    <div class="auth-modal-dialog" onclick="event.stopPropagation()">
+        <button type="button" class="auth-modal-close-btn" onclick="closeAuthModal()" title="Đóng">✕</button>
+        <div class="auth-box-panel">
+            <div id="modalAuthAlertBox" class="auth-alert-banner" style="display: none;"></div>
+
+            <!-- PHẦN ĐĂNG NHẬP -->
+            <div id="authLoginSection" class="auth-form-view">
+                <div class="auth-panel-header">
+                    <div class="auth-panel-icon">🔐</div>
+                    <h2 class="auth-panel-title">Đăng Nhập</h2>
+                    <p class="auth-panel-desc">Nhập tên tài khoản và mật khẩu của bạn để tiếp tục</p>
+                </div>
+                <form id="formLogin" onsubmit="handleLoginSubmit(event)" class="auth-form">
+                    <div class="auth-field">
+                        <label for="loginUsername" class="auth-field-label">Tên</label>
+                        <div class="auth-input-wrapper">
+                            <input type="text" id="loginUsername" name="username" class="auth-input-control" placeholder="Nhập tên tài khoản..." required>
+                        </div>
+                    </div>
+                    <div class="auth-field">
+                        <label for="loginPassword" class="auth-field-label">Mật Khẩu</label>
+                        <div class="auth-input-wrapper">
+                            <input type="password" id="loginPassword" name="password" class="auth-input-control" placeholder="Nhập mật khẩu..." required>
+                        </div>
+                    </div>
+                    <button type="submit" id="btnLoginSubmit" class="auth-btn-primary">
+                        <span>Tiếp Tục</span>
+                        <span class="btn-arrow">→</span>
+                    </button>
+                    <div class="auth-switch-prompt">
+                        <span>Chưa có tài khoản?</span>
+                        <button type="button" class="auth-switch-link-small" onclick="switchAuthMode('register')">Đăng Kí ngay</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- PHẦN ĐĂNG KÍ -->
+            <div id="authRegisterSection" class="auth-form-view" style="display: none;">
+                <div class="auth-panel-header">
+                    <div class="auth-panel-icon">✨</div>
+                    <h2 class="auth-panel-title">Đăng Kí Tài Khoản</h2>
+                    <p class="auth-panel-desc">Tạo tài khoản mới để tham gia cộng đồng học tập EduVie</p>
+                </div>
+                <form id="formRegister" onsubmit="handleRegisterSubmit(event)" class="auth-form">
+                    <div class="auth-field">
+                        <label for="regUsername" class="auth-field-label">Tên</label>
+                        <div class="auth-input-wrapper">
+                            <input type="text" id="regUsername" name="username" class="auth-input-control" placeholder="Tên đăng nhập..." required>
+                        </div>
+                    </div>
+                    <div class="auth-field">
+                        <label for="regPassword" class="auth-field-label">Mật Khẩu</label>
+                        <div class="auth-input-wrapper">
+                            <input type="password" id="regPassword" name="password" class="auth-input-control" placeholder="Tạo mật khẩu..." required>
+                        </div>
+                    </div>
+                    <div class="auth-field">
+                        <label for="regConfirmPassword" class="auth-field-label">Mật Khẩu Xác Nhận</label>
+                        <div class="auth-input-wrapper">
+                            <input type="password" id="regConfirmPassword" name="confirm_password" class="auth-input-control" placeholder="Xác nhận mật khẩu..." required>
+                        </div>
+                    </div>
+                    <button type="submit" id="btnRegisterSubmit" class="auth-btn-primary">
+                        <span>Tạo Tài Khoản</span>
+                        <span class="btn-arrow">✨</span>
+                    </button>
+                    <div class="auth-switch-prompt">
+                        <span>Đã có tài khoản?</span>
+                        <button type="button" class="auth-switch-link-small" onclick="switchAuthMode('login')">Đăng Nhập ngay</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
