@@ -1,0 +1,377 @@
+import os
+import re
+import smtplib
+import threading
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from pathlib import Path
+from datetime import datetime
+import zoneinfo
+from dotenv import load_dotenv
+
+import sqlite3
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask import Flask, render_template, request, jsonify, flash, session
+from flask_wtf.csrf import CSRFProtect
+from a2wsgi import WSGIMiddleware
+from google import genai
+from google.genai import types
+
+from forms import StudyQuestionForm
+
+def clean_markdown_formatting(text: str) -> str:
+    if not text:
+        return ""
+    """ Giu nguyen phep nhan toan hoc 2 x 3 """
+    cleaned = re.sub(r'(\d)\s{0,}[\x2a]\s{0,}(\d)', r'\1 × \2', text)
+    """ Chuyen gach dau dong dang sao sang gach ngang """
+    cleaned = re.sub(r'(?m)^(\s{0,})[\x2a]\s+', r'\1- ', cleaned)
+    """ Bo dau thang tieu de o dau dong """
+    cleaned = re.sub(r'(?m)^[\x23]{1,6}\s*', '', cleaned)
+    """ Loai bo hoan toan dau sao va dau thang """
+    cleaned = cleaned.replace('\x2a\x2a', '').replace('\x2a', '').replace('\x23', '')
+    return cleaned.strip()
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env", override=True)
+
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    raise RuntimeError("Chưa tìm thấy GEMINI_API_KEY trong file .env!")
+
+client = genai.Client(api_key=api_key)
+
+flask_app = Flask(
+    __name__,
+    template_folder=str(BASE_DIR / "templates"),
+    static_folder=str(BASE_DIR / "static"),
+    static_url_path="/static"
+)
+flask_app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'eduvie-flask-wtf-super-secret-key-2026')
+flask_app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+csrf = CSRFProtect(flask_app)
+
+DB_PATH = BASE_DIR / "users.db"
+
+def init_user_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_user_db()
+
+def generate_ai_email_content(student_name: str, subject: str, grade: str, question: str) -> str:
+    prompt = (
+        f"Hãy soạn một bức thư phản hồi giải đáp câu hỏi học tập theo đúng cấu trúc và văn phong quy định bên dưới:\n\n"
+        f"MẪU BẮT BUỘC:\n"
+        f"Trung Tâm EduVie - Tinh Hoa Tri Thức\n"
+        f"Kính gửi bạn {student_name}\n"
+        f"Chúng mình xin tiếp nhận câu hỏi và đóng góp của bạn ! Nhằm mục đích xây dựng một cộng đồng học hỏi , nghiên cứu ngày thêm lớn mạnh . Thì bây giờ mình xin phép giải đáp thắc mắc của bạn như sau :\n\n"
+        f"[NỘI DUNG GIẢI ĐÁP]\n\n"
+        f"Trung Tâm EduVie xin chân thành cảm ơn bạn {student_name} đã đóng góp ý kiến và câu hỏi cho chúng mình. Chúc bạn luôn giữ vững ngọn lửa đam mê và gặt hái thật nhiều thành công trên con đường học vấn!\n"
+        f"Thân ái chào bạn!\n\n"
+        f"HƯỚNG DẪN CHI TIẾT CHO PHẦN [NỘI DUNG GIẢI ĐÁP]:\n"
+        f"- Câu hỏi của học sinh: \"{question}\" (Môn {subject}, Lớp {grade}).\n"
+        f"- Nếu câu hỏi thuộc về kiến thức bài học, học tập: Hãy giải thích cặn kẽ, dễ hiểu, sinh động, chuẩn xác từng bước theo chương trình phổ thông.\n"
+        f"- Nếu câu hỏi hoàn toàn không liên quan đến học tập, kiến thức (ví dụ nói tục, đố linh tinh, vô nghĩa, tiêu cực): Hãy lịch sự từ chối trả lời và nhẹ nhàng hướng dẫn học sinh gửi những thắc mắc bổ ích về môn học.\n\n"
+        f"QUY TẮC ĐỊNH DẠNG TUYỆT ĐỐI:\n"
+        f"- Không dùng dấu sao.\n"
+        f"- Không dùng dấu thăng.\n"
+        f"- Dùng dấu gạch ngang (-) cho danh sách, xuống dòng rõ ràng, dễ đọc."
+    )
+
+    candidate_models = [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash"
+    ]
+
+    for model_name in candidate_models:
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            if resp and resp.text:
+                return clean_markdown_formatting(resp.text)
+        except Exception as e:
+            print(f"[Warning] Model {model_name} failed: {e}")
+            continue
+
+    return (
+        f"Trung Tâm EduVie - Tinh Hoa Tri Thức\n"
+        f"Kính gửi bạn {student_name}\n"
+        f"Chúng mình xin tiếp nhận câu hỏi và đóng góp của bạn ! Nhằm mục đích xây dựng một cộng đồng học hỏi , nghiên cứu ngày thêm lớn mạnh . Thì bây giờ mình xin phép giải đáp thắc mắc của bạn như sau :\n\n"
+        f"Hệ thống hiện đang tiếp nhận câu hỏi \"{question}\" môn {subject} của bạn. Đội ngũ trợ giảng EduVie đang xử lý và sẽ phản hồi sớm nhất.\n\n"
+        f"Trung Tâm EduVie xin chân thành cảm ơn bạn {student_name} đã đóng góp ý kiến. Chúc bạn một ngày học tập thật tốt lành!\n"
+        f"Thân ái chào bạn!"
+    )
+
+def send_smtp_email(to_email: str, student_name: str, subject_name: str, letter_body: str) -> tuple[bool, str]:
+    load_dotenv(BASE_DIR / ".env", override=True)
+    mail_username = os.environ.get("MAIL_USERNAME", "").strip()
+    mail_password = os.environ.get("MAIL_PASSWORD", "").strip()
+
+    if not mail_username or not mail_password:
+        return (
+            False,
+            "Chưa cấu hình MAIL_USERNAME và MAIL_PASSWORD (Mật khẩu ứng dụng Gmail) trong file .env."
+        )
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"Trung Tâm EduVie <{mail_username}>"
+        msg['To'] = to_email
+        msg['Subject'] = f"[EduVie] Thư giải đáp thắc mắc môn {subject_name} - Kính gửi bạn {student_name}"
+
+        msg.attach(MIMEText(letter_body, 'plain', 'utf-8'))
+
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(mail_username, mail_password)
+            server.sendmail(mail_username, [to_email], msg.as_string())
+
+        return (True, f"Đã gửi thành công thư giải đáp đến hộp thư {to_email}")
+    except Exception as err:
+        return (False, f"Lỗi gửi email qua SMTP: {str(err)}")
+
+@flask_app.route('/', methods=['GET', 'POST'])
+def home():
+    form = StudyQuestionForm()
+    submitted_data = None
+
+    if form.validate_on_submit():
+        name = form.student_name.data.strip()
+        subj = form.subject.data
+        grd = form.grade.data
+        q = form.question.data.strip()
+        email = form.email.data.strip()
+
+        """ 1. Tạo nội dung thư giải đáp bằng AI Gemini theo đúng mẫu của người dùng """
+        ai_letter = generate_ai_email_content(name, subj, grd, q)
+
+        """ 2. Gửi thư qua Email người nhận bằng SMTP Gmail (chạy ngầm đa luồng để phản hồi ngay lập tức) """
+        email_thread = threading.Thread(
+            target=send_smtp_email,
+            args=(email, name, subj, ai_letter),
+            daemon=True
+        )
+        email_thread.start()
+
+        flash(f"Thành công! Lời giải môn {subj} đang được hệ thống gửi trực tiếp đến hộp thư {email} của bạn ({name}).", "success")
+
+        submitted_data = {
+            "name": name,
+            "email": email,
+            "subject": subj,
+            "grade": grd,
+            "question": q,
+            "ai_letter": ai_letter,
+            "email_status": {
+                "success": True,
+                "message": f"Thư giải đáp đang được chuyển phát đến hộp thư {email}"
+            }
+        }
+
+    return render_template(
+        'index.html',
+        title="Trợ lí học tập EduVie",
+        form=form,
+        submitted_data=submitted_data
+    )
+
+@flask_app.route('/api/chat', methods=['POST'])
+@csrf.exempt
+def chat_endpoint():
+    try:
+        data = request.get_json(silent=True) or {}
+        user_message = data.get("message", "").strip()
+        history = data.get("history", [])
+        grades_summary = data.get("grades_summary", "")
+
+        if not user_message:
+            return jsonify({"reply": "Vui lòng nhập câu hỏi của bạn."}), 400
+
+        vn_tz = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
+        current_time = datetime.now(vn_tz).strftime("%A, ngày %d/%m/%Y, %H:%M:%S")
+
+        system_instruction = (
+            f"Bạn là Trợ lý AI EduVie thông minh, chu đáo, ấm áp và truyền cảm hứng, chuyên hỗ trợ giải đáp học tập cho học sinh Việt Nam. "
+            f"Thời gian hiện tại: {current_time}.\n"
+            f"Dưới đây là thông tin bảng điểm của học sinh:\n"
+            f"{grades_summary if grades_summary else 'Chưa có thông tin bảng điểm.'}\n\n"
+            f"PHONG CÁCH VÀ NHIỆM VỤ:\n"
+            f"- Trả lời thật sinh động, cuốn hút, kèm theo các ví dụ thực tế đời sống gần gũi để học sinh thấy kiến thức luôn thú vị và dễ hiểu.\n"
+            f"- Luôn dùng giọng điệu thân thiện, tâm lý, đồng hành và khích lệ tinh thần học hỏi của học sinh.\n"
+            f"- Giải thích cặn kẽ từng bước, không làm tắt, giúp học sinh nắm vững bản chất vấn đề.\n"
+            f"- Nếu học sinh hỏi về kết quả điểm hay môn yếu, hãy chú ý môn có điểm thấp nhất để nhắc nhở khéo léo và đưa ra phương pháp ôn tập phù hợp, nhẹ nhàng.\n\n"
+            f"QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
+            f"- TUYỆT ĐỐI KHÔNG sử dụng dấu sao.\n"
+            f"- TUYỆT ĐỐI KHÔNG sử dụng dấu thăng.\n"
+            f"- Để làm nổi bật tiêu đề hoặc các ý chính, hãy dùng CHỮ IN HOA, dấu gạch ngang (-), số thứ tự (1, 2, 3) hoặc các emoji sinh động (📌, 🌟, 🔹, 📚, ✨, 💡).\n"
+            f"- Trình bày mạch lạc, xuống dòng thoáng mắt, câu văn tự nhiên và dễ đọc."
+        )
+
+        contents = []
+        for item in history:
+            role = item.get("role", "user")
+            content = item.get("content", "")
+            contents.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part.from_text(text=content)]
+                )
+            )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_message)]
+            )
+        )
+
+        candidate_models = [
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash"
+        ]
+
+        last_err = None
+        for model_name in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction
+                    )
+                )
+                if response and response.text:
+                    cleaned_reply = clean_markdown_formatting(response.text)
+                    return jsonify({"reply": cleaned_reply})
+            except Exception as model_err:
+                last_err = model_err
+                print(f"[Warning] Model {model_name} failed: {model_err}")
+                continue
+
+        err_msg = str(last_err) if last_err else "Không nhận được phản hồi từ AI."
+        if "503" in err_msg or "UNAVAILABLE" in err_msg or "high demand" in err_msg:
+            return jsonify({"reply": "Hệ thống AI hiện đang có lượng truy cập cao đột biến từ máy chủ. Bạn vui lòng gửi lại câu hỏi sau vài giây nhé!"})
+
+        return jsonify({"detail": f"Lỗi AI: {err_msg}"}), 500
+
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500
+
+@flask_app.route('/api/auth/register', methods=['POST'])
+@csrf.exempt
+def auth_register():
+    try:
+        data = request.get_json(silent=True) or {}
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+        confirm_password = data.get("confirm_password", "").strip()
+
+        if not username:
+            return jsonify({"success": False, "error": "Vui lòng nhập Tên đăng nhập."}), 400
+        if len(username) < 2:
+            return jsonify({"success": False, "error": "Tên đăng nhập cần có tối thiểu 2 ký tự."}), 400
+        if not password:
+            return jsonify({"success": False, "error": "Vui lòng nhập Mật khẩu."}), 400
+        if len(password) < 4:
+            return jsonify({"success": False, "error": "Mật khẩu cần có ít nhất 4 ký tự."}), 400
+        if password != confirm_password:
+            return jsonify({"success": False, "error": "Mật khẩu xác nhận không trùng khớp!"}), 400
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        existing = cursor.fetchone()
+        if existing:
+            conn.close()
+            return jsonify({"success": False, "error": "Tên tài khoản này đã tồn tại, vui lòng chọn tên khác."}), 400
+
+        pwd_hash = generate_password_hash(password)
+        vn_tz = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
+        created_at = datetime.now(vn_tz).strftime("%d/%m/%Y %H:%M")
+
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username, pwd_hash, created_at)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "message": "Tạo tài khoản thành công!",
+            "username": username
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Lỗi hệ thống: {str(e)}"}), 500
+
+@flask_app.route('/api/auth/login', methods=['POST'])
+@csrf.exempt
+def auth_login():
+    try:
+        data = request.get_json(silent=True) or {}
+        username = data.get("username", "").strip()
+        password = data.get("password", "").strip()
+
+        if not username or not password:
+            return jsonify({"success": False, "error": "Vui lòng nhập đầy đủ Tên và Mật khẩu."}), 400
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, password_hash, created_at FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not check_password_hash(row[2], password):
+            return jsonify({"success": False, "error": "Tên tài khoản hoặc mật khẩu không chính xác."}), 401
+
+        user_info = {
+            "id": row[0],
+            "username": row[1],
+            "created_at": row[3]
+        }
+        session['user'] = user_info
+
+        return jsonify({
+            "success": True,
+            "message": f"Đăng nhập thành công! Chào mừng {row[1]}",
+            "user": user_info
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Lỗi hệ thống: {str(e)}"}), 500
+
+@flask_app.route('/api/auth/logout', methods=['POST'])
+@csrf.exempt
+def auth_logout():
+    session.pop('user', None)
+    return jsonify({"success": True, "message": "Đã đăng xuất thành công."})
+
+@flask_app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    user = session.get('user')
+    if user:
+        return jsonify({"logged_in": True, "user": user})
+    return jsonify({"logged_in": False})
+
+app = WSGIMiddleware(flask_app)
+
+if __name__ == '__main__':
+    flask_app.run(host='127.0.0.1', port=8000, debug=True)
